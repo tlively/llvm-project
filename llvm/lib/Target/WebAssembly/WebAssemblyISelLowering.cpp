@@ -759,7 +759,8 @@ bool WebAssemblyTargetLowering::CanLowerReturn(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     LLVMContext & /*Context*/) const {
   // WebAssembly can't currently handle returning tuples.
-  return Outs.size() <= 1;
+  // return Outs.size() <= 1;
+  return true;
 }
 
 SDValue WebAssemblyTargetLowering::LowerReturn(
@@ -767,11 +768,12 @@ SDValue WebAssemblyTargetLowering::LowerReturn(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     const SmallVectorImpl<SDValue> &OutVals, const SDLoc &DL,
     SelectionDAG &DAG) const {
-  assert(Outs.size() <= 1 && "WebAssembly can only return up to one value");
+  //  assert(Outs.size() <= 1 && "WebAssembly can only return up to one value");
   if (!CallingConvSupported(CallConv))
     fail(DL, DAG, "WebAssembly doesn't support non-C calling conventions");
 
   SmallVector<SDValue, 4> RetOps(1, Chain);
+  assert(RetOps.size() <= 1);
   RetOps.append(OutVals.begin(), OutVals.end());
   Chain = DAG.getNode(WebAssemblyISD::RETURN, DL, MVT::Other, RetOps);
 

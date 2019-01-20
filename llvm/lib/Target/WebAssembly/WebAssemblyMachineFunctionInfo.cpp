@@ -43,6 +43,9 @@ void llvm::ComputeLegalValueVTs(const Function &F, const TargetMachine &TM,
   }
 }
 
+#define DEBUG_TYPE "multivalue-return"
+STATISTIC(MultiValueReturnCount, "The number of functions that could have had multiple return values");
+
 void llvm::ComputeSignatureVTs(const FunctionType *Ty, const Function &F,
                                const TargetMachine &TM,
                                SmallVectorImpl<MVT> &Params,
@@ -50,13 +53,14 @@ void llvm::ComputeSignatureVTs(const FunctionType *Ty, const Function &F,
   ComputeLegalValueVTs(F, TM, Ty->getReturnType(), Results);
 
   MVT PtrVT = MVT::getIntegerVT(TM.createDataLayout().getPointerSizeInBits());
-  if (Results.size() > 1) {
-    // WebAssembly currently can't lower returns of multiple values without
-    // demoting to sret (see WebAssemblyTargetLowering::CanLowerReturn). So
-    // replace multiple return values with a pointer parameter.
-    Results.clear();
-    Params.push_back(PtrVT);
-  }
+  // if (Results.size() > 1) {
+  //   // WebAssembly currently can't lower returns of multiple values without
+  //   // demoting to sret (see WebAssemblyTargetLowering::CanLowerReturn). So
+  //   // replace multiple return values with a pointer parameter.
+  //   Results.clear();
+  //   Params.push_back(PtrVT);
+  // }
+  if (Results.size() > 1) ++MultiValueReturnCount;
 
   for (auto *Param : Ty->params())
     ComputeLegalValueVTs(F, TM, Param, Params);
