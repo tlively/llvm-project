@@ -144,7 +144,29 @@ Changes to the MIPS Target
 Changes to the PowerPC Target
 -----------------------------
 
- During this release ...
+Optimization:
+
+  *  Improved register pressure estimates in the loop vectorizer based on type
+  *  Improved the PowerPC cost model for the vectorizer
+  *  Enabled vectorization of math routines on PowerPC using MASSV (Mathematical Acceleration SubSystem) library
+
+compiler-rt:
+
+  *  Added/improved conversion functions from IBM long double to 128-bit integers
+
+Codegen:
+
+   *  Optimized memory access instructions in loops (pertaining to update-form instructions and address computation)
+   *  Added options to disable hoisting instructions to hotter blocks based on statically or profile-based block hotness estimates
+   *  Code generation improvements (particularly with floating point and vector code as well as handling condition registers)
+   *  Various infrastructural improvements, code refactoring, and bug fixes
+   *  Optimized handling of control flow based on multiple comparison of same values
+
+Tools:
+
+  *   llvm-readobj supports displaying file header, section headers, symbol table and relocation entries for XCOFF object files
+  *   llvm-objdump supports disassembling physical sections for XCOFF object files
+
 
 Changes to the X86 Target
 -------------------------
@@ -222,7 +244,17 @@ Changes to LLDB
 External Open Source Projects Using LLVM 10
 ===========================================
 
-* A project...
+Zig Programming Language
+------------------------
+
+`Zig <https://ziglang.org>`_  is a system programming language intended to be
+an alternative to C. It provides high level features such as generics, compile
+time function execution, and partial evaluation, while exposing low level LLVM
+IR features such as aliases and intrinsics. Zig uses Clang to provide automatic
+import of .h symbols, including inline functions and simple macros. Zig uses
+LLD combined with lazily building compiler-rt to provide out-of-the-box
+cross-compiling for all supported targets.
+
 
 
 Additional Information
