@@ -4266,8 +4266,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Discard value names in assert builds unless otherwise specified.
   if (Args.hasFlag(options::OPT_fdiscard_value_names,
-                   options::OPT_fno_discard_value_names, !IsAssertBuild))
+                   options::OPT_fno_discard_value_names, !IsAssertBuild)) {
+    if (Args.hasArg(options::OPT_fdiscard_value_names) &&
+        (std::any_of(Inputs.begin(), Inputs.end(),
+                     [](const clang::driver::InputInfo &II) {
+                       return types::isLLVMIR(II.getType());
+                     }))) {
+      D.Diag(diag::warn_ignoring_fdiscard_for_bitcode);
+    }
     CmdArgs.push_back("-discard-value-names");
+  }
 
   // Set the main file name, so that debug info works even with
   // -save-temps.
@@ -6053,7 +6061,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Output.getType() == types::TY_Object &&
       Args.hasFlag(options::OPT__SLASH_showFilenames,
                    options::OPT__SLASH_showFilenames_, false)) {
-    C.getJobs().getJobs().back()->setPrintInputFilenames(true);
+    C.getJobs().getJobs().back()->PrintInputFilenames = true;
   }
 
   if (Arg *A = Args.getLastArg(options::OPT_pg))

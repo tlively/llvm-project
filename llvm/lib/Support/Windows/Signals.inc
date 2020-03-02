@@ -23,7 +23,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 // The Windows.h header must be after LLVM and standard headers.
-#include "WindowsSupport.h"
+#include "llvm/Support/Windows/WindowsSupport.h"
 
 #ifdef __MINGW32__
  #include <imagehlp.h>
@@ -820,7 +820,13 @@ static LONG WINAPI LLVMUnhandledExceptionFilter(LPEXCEPTION_POINTERS ep) {
                    << "\n";
   }
 
-  LocalPrintStackTrace(llvm::errs(), ep ? ep->ContextRecord : nullptr);
+  // Stack unwinding appears to modify the context. Copy it to preserve the
+  // caller's context.
+  CONTEXT ContextCopy;
+  if (ep)
+    memcpy(&ContextCopy, ep->ContextRecord, sizeof(ContextCopy));
+
+  LocalPrintStackTrace(llvm::errs(), ep ? &ContextCopy : nullptr);
 
   return EXCEPTION_EXECUTE_HANDLER;
 }
