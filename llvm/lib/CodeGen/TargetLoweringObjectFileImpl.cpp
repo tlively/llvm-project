@@ -1692,6 +1692,14 @@ static const Comdat *getWasmComdat(const GlobalValue *GV) {
 }
 
 static SectionKind getWasmKindForNamedSection(StringRef Name, SectionKind K) {
+  // Certain data sections we treat as named custom sections rather than
+  // segments within the data section.
+  // This could be avoided if all data segements (the wasm sense) were
+  // represented as thier own sections (in the llvm sense).
+  // TODO(sbc): https://github.com/WebAssembly/tool-conventions/issues/138
+  if (Name == ".llvmcmd" || Name == ".llvmbc")
+    return SectionKind::getMetadata();
+
   // If we're told we have function data, then use that.
   if (K.isText())
     return SectionKind::getText();
