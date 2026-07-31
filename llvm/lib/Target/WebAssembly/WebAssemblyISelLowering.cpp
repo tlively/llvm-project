@@ -189,6 +189,9 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
     setOperationAction(ISD::SMUL_LOHI, MVT::i64, Custom);
     setOperationAction(ISD::UMUL_LOHI, MVT::i64, Custom);
     setOperationAction(ISD::UADDO, MVT::i64, Custom);
+    setTargetDAGCombine({(ISD::NodeType)WebAssemblyISD::I64_ADD128,
+                         (ISD::NodeType)WebAssemblyISD::I64_ADD_WIDE3,
+                         ISD::ADD});
   }
 
   if (Subtarget->hasNontrappingFPToInt())
@@ -1194,6 +1197,14 @@ void WebAssemblyTargetLowering::computeKnownBitsForTargetNode(
         Known.Zero.setBitsFrom(1);
     }
     break;
+  case WebAssemblyISD::I64_ADD_WIDE2:
+    if (Op.getResNo() == 1)
+      Known.Zero.setBitsFrom(1);
+    break;
+  case WebAssemblyISD::I64_ADD_WIDE3:
+    if (Op.getResNo() == 1)
+      Known.Zero.setBitsFrom(2);
+    break;
   }
 }
 
@@ -1940,11 +1951,11 @@ SDValue WebAssemblyTargetLowering::LowerMUL_LOHI(SDValue Op,
   return DAG.getMergeValues(Ops, DL);
 }
 
-// Lowers `UADDO` intrinsics to an `i64.add128` instruction when it's enabled.
+// Lowers `UADDO` intrinsics to an `i64.add_wide2` instruction when it's
+// enabled.
 //
-// This enables generating a single wasm instruction for this operation where
-// the upper half of both operands are constant zeros. The upper half of the
-// result is then whether the overflow happened.
+// This enables generating a single wasm instruction for this operation.
+// The upper half of the result is then whether the overflow happened.
 SDValue WebAssemblyTargetLowering::LowerUADDO(SDValue Op,
                                               SelectionDAG &DAG) const {
   assert(Subtarget->hasWideArithmetic());
@@ -1953,10 +1964,8 @@ SDValue WebAssemblyTargetLowering::LowerUADDO(SDValue Op,
   SDLoc DL(Op);
   SDValue LHS = Op.getOperand(0);
   SDValue RHS = Op.getOperand(1);
-  SDValue Zero = DAG.getConstant(0, DL, MVT::i64);
-  SDValue Result =
-      DAG.getNode(WebAssemblyISD::I64_ADD128, DL,
-                  DAG.getVTList(MVT::i64, MVT::i64), LHS, Zero, RHS, Zero);
+  SDValue Result = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
+                               DAG.getVTList(MVT::i64, MVT::i64), LHS, RHS);
   SDValue CarryI64(Result.getNode(), 1);
   SDValue CarryI32 = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, CarryI64);
   SDValue Ops[] = {Result, CarryI32};
@@ -4025,12 +4034,190 @@ static SDValue performMinMaxF128Combine(SDNode *N, SelectionDAG &DAG) {
   }
 }
 
+static SDValue unwrapCarry(SDValue V) {
+  while (true) {
+    if (V.getOpcode() == ISD::ZERO_EXTEND || V.getOpcode() == ISD::ANY_EXTEND ||
+        V.getOpcode() == ISD::AssertZext) {
+      V = V.getOperand(0);
+      continue;
+    }
+    if (V.getOpcode() == ISD::AND && isOneConstant(V.getOperand(1))) {
+      V = V.getOperand(0);
+      continue;
+    }
+    if (V.getOpcode() == ISD::TRUNCATE) {
+      V = V.getOperand(0);
+      continue;
+    }
+    break;
+  }
+  return V;
+}
+
+static bool getWideAddInputs(SDNode *Node, SDValue &In0, SDValue &In1) {
+  if (Node->getOpcode() == WebAssemblyISD::I64_ADD_WIDE2) {
+    In0 = Node->getOperand(0);
+    In1 = Node->getOperand(1);
+    return true;
+  }
+  if (Node->getOpcode() == WebAssemblyISD::I64_ADD128) {
+    if (isNullConstant(Node->getOperand(1)) &&
+        isNullConstant(Node->getOperand(3))) {
+      In0 = Node->getOperand(0);
+      In1 = Node->getOperand(2);
+      return true;
+    }
+  }
+  return false;
+}
+
+static SDValue performAddCombine(SDNode *N,
+                                 TargetLowering::DAGCombinerInfo &DCI,
+                                 const WebAssemblySubtarget *Subtarget) {
+  if (N->getValueType(0) != MVT::i64 || !Subtarget->hasWideArithmetic())
+    return SDValue();
+
+  SDValue Op0 = unwrapCarry(N->getOperand(0));
+  SDValue Op1 = unwrapCarry(N->getOperand(1));
+
+  if (Op0.getResNo() != 1 || Op1.getResNo() != 1)
+    return SDValue();
+
+  SDNode *Node0 = Op0.getNode();
+  SDNode *Node1 = Op1.getNode();
+
+  SDValue Node0_In0, Node0_In1;
+  SDValue Node1_In0, Node1_In1;
+  if (!getWideAddInputs(Node0, Node0_In0, Node0_In1) ||
+      !getWideAddInputs(Node1, Node1_In0, Node1_In1))
+    return SDValue();
+
+  SDNode *NodeA = nullptr;
+  SDNode *NodeB = nullptr;
+  SDValue A, B, C;
+
+  if (Node1_In0 == SDValue(Node0, 0)) {
+    NodeA = Node0;
+    NodeB = Node1;
+    A = Node0_In0;
+    B = Node0_In1;
+    C = Node1_In1;
+  } else if (Node1_In1 == SDValue(Node0, 0)) {
+    NodeA = Node0;
+    NodeB = Node1;
+    A = Node0_In0;
+    B = Node0_In1;
+    C = Node1_In0;
+  } else if (Node0_In0 == SDValue(Node1, 0)) {
+    NodeA = Node1;
+    NodeB = Node0;
+    A = Node1_In0;
+    B = Node1_In1;
+    C = Node0_In1;
+  } else if (Node0_In1 == SDValue(Node1, 0)) {
+    NodeA = Node1;
+    NodeB = Node0;
+    A = Node1_In0;
+    B = Node1_In1;
+    C = Node0_In0;
+  }
+
+  if (!NodeA || !NodeB)
+    return SDValue();
+
+  auto &DAG = DCI.DAG;
+  SDLoc DL(N);
+  SDValue Wide3 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                              DAG.getVTList(MVT::i64, MVT::i64), A, B, C);
+  DCI.DAG.ReplaceAllUsesOfValueWith(SDValue(NodeB, 0), Wide3.getValue(0));
+  return Wide3.getValue(1);
+}
+
+static SDValue performI64Add128Combine(SDNode *N,
+                                       TargetLowering::DAGCombinerInfo &DCI) {
+  assert(N->getOpcode() == WebAssemblyISD::I64_ADD128);
+  SDValue LHS_Lo = N->getOperand(0);
+  SDValue LHS_Hi = N->getOperand(1);
+  SDValue RHS_Lo = N->getOperand(2);
+  SDValue RHS_Hi = N->getOperand(3);
+  SDLoc DL(N);
+  auto &DAG = DCI.DAG;
+
+  if (isNullConstant(RHS_Hi)) {
+    if (LHS_Lo.getNode() == LHS_Hi.getNode() && LHS_Lo.getResNo() == 0 &&
+        LHS_Hi.getResNo() == 1) {
+      SDValue A, B;
+      if (getWideAddInputs(LHS_Lo.getNode(), A, B)) {
+        SDValue Wide3 =
+            DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                        DAG.getVTList(MVT::i64, MVT::i64), A, B, RHS_Lo);
+        return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
+      }
+    }
+  }
+
+  if (isNullConstant(LHS_Hi)) {
+    if (RHS_Lo.getNode() == RHS_Hi.getNode() && RHS_Lo.getResNo() == 0 &&
+        RHS_Hi.getResNo() == 1) {
+      SDValue A, B;
+      if (getWideAddInputs(RHS_Lo.getNode(), A, B)) {
+        SDValue Wide3 =
+            DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                        DAG.getVTList(MVT::i64, MVT::i64), A, B, LHS_Lo);
+        return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
+      }
+    }
+  }
+
+  if (isNullConstant(LHS_Hi) && isNullConstant(RHS_Hi)) {
+    SDValue Wide2 =
+        DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
+                    DAG.getVTList(MVT::i64, MVT::i64), LHS_Lo, RHS_Lo);
+    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+  }
+
+  return SDValue();
+}
+
+static SDValue performI64AddWide3Combine(SDNode *N,
+                                         TargetLowering::DAGCombinerInfo &DCI) {
+  assert(N->getOpcode() == WebAssemblyISD::I64_ADD_WIDE3);
+  SDValue A = N->getOperand(0);
+  SDValue B = N->getOperand(1);
+  SDValue C = N->getOperand(2);
+  SDLoc DL(N);
+  auto &DAG = DCI.DAG;
+
+  if (isNullConstant(C)) {
+    SDValue Wide2 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
+                                DAG.getVTList(MVT::i64, MVT::i64), A, B);
+    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+  }
+  if (isNullConstant(B)) {
+    SDValue Wide2 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
+                                DAG.getVTList(MVT::i64, MVT::i64), A, C);
+    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+  }
+  if (isNullConstant(A)) {
+    SDValue Wide2 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
+                                DAG.getVTList(MVT::i64, MVT::i64), B, C);
+    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+  }
+  return SDValue();
+}
+
 SDValue
 WebAssemblyTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
   switch (N->getOpcode()) {
   default:
     return SDValue();
+  case ISD::ADD:
+    return performAddCombine(N, DCI, Subtarget);
+  case WebAssemblyISD::I64_ADD128:
+    return performI64Add128Combine(N, DCI);
+  case WebAssemblyISD::I64_ADD_WIDE3:
+    return performI64AddWide3Combine(N, DCI);
   case ISD::BITCAST:
     return performBitcastCombine(N, DCI);
   case ISD::SETCC:

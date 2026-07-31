@@ -170,10 +170,8 @@ define { i64, i1 } @add_wide_u(i64 %a, i64 %b) {
 ; CHECK:         .functype add_wide_u (i32, i64, i64) -> ()
 ; CHECK-NEXT:  # %bb.0:
 ; CHECK-NEXT:    local.get 1
-; CHECK-NEXT:    i64.const 0
 ; CHECK-NEXT:    local.get 2
-; CHECK-NEXT:    i64.const 0
-; CHECK-NEXT:    i64.add128
+; CHECK-NEXT:    i64.add_wide2
 ; CHECK-NEXT:    local.set 1
 ; CHECK-NEXT:    local.set 2
 ; CHECK-NEXT:    local.get 0
@@ -195,27 +193,17 @@ define { i64, i64 } @add_wide3_u_via_intrinsics(i64 %a, i64 %b, i64 %c) {
 ; CHECK:         .functype add_wide3_u_via_intrinsics (i32, i64, i64, i64) -> ()
 ; CHECK-NEXT:  # %bb.0:
 ; CHECK-NEXT:    local.get 1
-; CHECK-NEXT:    i64.const 0
 ; CHECK-NEXT:    local.get 2
-; CHECK-NEXT:    i64.const 0
-; CHECK-NEXT:    i64.add128
-; CHECK-NEXT:    local.set 1
-; CHECK-NEXT:    local.set 2
-; CHECK-NEXT:    local.get 2
-; CHECK-NEXT:    i64.const 0
 ; CHECK-NEXT:    local.get 3
-; CHECK-NEXT:    i64.const 0
-; CHECK-NEXT:    i64.add128
+; CHECK-NEXT:    i64.add_wide3
+; CHECK-NEXT:    local.set 2
 ; CHECK-NEXT:    local.set 3
-; CHECK-NEXT:    local.set 2
 ; CHECK-NEXT:    local.get 0
 ; CHECK-NEXT:    local.get 2
-; CHECK-NEXT:    i64.store 0
-; CHECK-NEXT:    local.get 0
-; CHECK-NEXT:    local.get 1
-; CHECK-NEXT:    local.get 3
-; CHECK-NEXT:    i64.add
 ; CHECK-NEXT:    i64.store 8
+; CHECK-NEXT:    local.get 0
+; CHECK-NEXT:    local.get 3
+; CHECK-NEXT:    i64.store 0
 ; CHECK-NEXT:    # fallthrough-return
   %pair = call { i64, i1 } @llvm.uadd.with.overflow.i64(i64 %a, i64 %b)
   %t0 = extractvalue { i64, i1 } %pair, 0
@@ -241,24 +229,16 @@ define { i64, i64 } @add_wide3_u_via_i128(i64 %a, i64 %b, i64 %c) {
 ; CHECK:         .functype add_wide3_u_via_i128 (i32, i64, i64, i64) -> ()
 ; CHECK-NEXT:  # %bb.0:
 ; CHECK-NEXT:    local.get 1
-; CHECK-NEXT:    i64.const 0
 ; CHECK-NEXT:    local.get 2
-; CHECK-NEXT:    i64.const 0
-; CHECK-NEXT:    i64.add128
-; CHECK-NEXT:    local.set 1
-; CHECK-NEXT:    local.set 2
-; CHECK-NEXT:    local.get 2
-; CHECK-NEXT:    local.get 1
 ; CHECK-NEXT:    local.get 3
-; CHECK-NEXT:    i64.const 0
-; CHECK-NEXT:    i64.add128
-; CHECK-NEXT:    local.set 1
+; CHECK-NEXT:    i64.add_wide3
 ; CHECK-NEXT:    local.set 2
+; CHECK-NEXT:    local.set 3
 ; CHECK-NEXT:    local.get 0
-; CHECK-NEXT:    local.get 1
+; CHECK-NEXT:    local.get 2
 ; CHECK-NEXT:    i64.store 8
 ; CHECK-NEXT:    local.get 0
-; CHECK-NEXT:    local.get 2
+; CHECK-NEXT:    local.get 3
 ; CHECK-NEXT:    i64.store 0
 ; CHECK-NEXT:    # fallthrough-return
   %a128 = zext i64 %a to i128

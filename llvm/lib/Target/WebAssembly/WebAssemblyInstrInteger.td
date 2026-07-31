@@ -162,6 +162,18 @@ defm I64_MUL_WIDE_U : I<(outs I64:$lo, I64:$hi), (ins I64:$lhs, I64:$rhs),
                         "i64.mul_wide_u\t$lo, $hi, $lhs, $rhs",
                         "i64.mul_wide_u",
                         0xfc16>;
+defm I64_ADD_WIDE2 : I<(outs I64:$lo, I64:$hi), (ins I64:$lhs, I64:$rhs),
+                       (outs), (ins),
+                       [],
+                       "i64.add_wide2\t$lo, $hi, $lhs, $rhs",
+                       "i64.add_wide2",
+                       0xfc17>;
+defm I64_ADD_WIDE3 : I<(outs I64:$lo, I64:$hi), (ins I64:$a, I64:$b, I64:$c),
+                       (outs), (ins),
+                       [],
+                       "i64.add_wide3\t$lo, $hi, $a, $b, $c",
+                       "i64.add_wide3",
+                       0xfc18>;
 } // Predicates = [HasWideArithmetic]
 
 def wasm_binop128_t : SDTypeProfile<2, 4, []>;
@@ -181,3 +193,13 @@ def : Pat<(wasm_mul_wide_s I64:$x, I64:$y),
           (I64_MUL_WIDE_S $x, $y)>;
 def : Pat<(wasm_mul_wide_u I64:$x, I64:$y),
           (I64_MUL_WIDE_U $x, $y)>;
+
+def wasm_add_wide2_t : SDTypeProfile<2, 2, []>;
+def wasm_add_wide2 : SDNode<"WebAssemblyISD::I64_ADD_WIDE2", wasm_add_wide2_t>;
+def wasm_add_wide3_t : SDTypeProfile<2, 3, []>;
+def wasm_add_wide3 : SDNode<"WebAssemblyISD::I64_ADD_WIDE3", wasm_add_wide3_t>;
+
+def : Pat<(wasm_add_wide2 I64:$lhs, I64:$rhs),
+          (I64_ADD_WIDE2 $lhs, $rhs)>;
+def : Pat<(wasm_add_wide3 I64:$a, I64:$b, I64:$c),
+          (I64_ADD_WIDE3 $a, $b, $c)>;
