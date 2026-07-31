@@ -1197,13 +1197,16 @@ void WebAssemblyTargetLowering::computeKnownBitsForTargetNode(
         Known.Zero.setBitsFrom(1);
     }
     break;
-  case WebAssemblyISD::I64_ADD_WIDE2:
-    if (Op.getResNo() == 1)
-      Known.Zero.setBitsFrom(1);
-    break;
   case WebAssemblyISD::I64_ADD_WIDE3:
-    if (Op.getResNo() == 1)
-      Known.Zero.setBitsFrom(2);
+    if (Op.getResNo() == 1) {
+      SDValue A = Op.getOperand(0);
+      SDValue B = Op.getOperand(1);
+      SDValue C = Op.getOperand(2);
+      if (isNullConstant(A) || isNullConstant(B) || isNullConstant(C))
+        Known.Zero.setBitsFrom(1);
+      else
+        Known.Zero.setBitsFrom(2);
+    }
     break;
   }
 }
@@ -1951,8 +1954,8 @@ SDValue WebAssemblyTargetLowering::LowerMUL_LOHI(SDValue Op,
   return DAG.getMergeValues(Ops, DL);
 }
 
-// Lowers `UADDO` intrinsics to an `i64.add_wide2` instruction when it's
-// enabled.
+// Lowers `UADDO` intrinsics to an `i64.add_wide3` instruction with an extra
+// constant 0 operand when wide arithmetic is enabled.
 //
 // This enables generating a single wasm instruction for this operation.
 // The upper half of the result is then whether the overflow happened.
@@ -1964,10 +1967,13 @@ SDValue WebAssemblyTargetLowering::LowerUADDO(SDValue Op,
   SDLoc DL(Op);
   SDValue LHS = Op.getOperand(0);
   SDValue RHS = Op.getOperand(1);
-  SDValue Result = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
-                               DAG.getVTList(MVT::i64, MVT::i64), LHS, RHS);
+  SDValue Zero = DAG.getConstant(0, DL, MVT::i64);
+  SDValue Result =
+      DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                  DAG.getVTList(MVT::i64, MVT::i64), LHS, RHS, Zero);
   SDValue CarryI64(Result.getNode(), 1);
-  SDValue CarryI32 = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, CarryI64);
+  SDValue CarryI32 =
+      DAG.getNode(ISD::TRUNCATE, DL, Op.getNode()->getValueType(1), CarryI64);
   SDValue Ops[] = {Result, CarryI32};
   return DAG.getMergeValues(Ops, DL);
 }
@@ -4055,10 +4061,22 @@ static SDValue unwrapCarry(SDValue V) {
 }
 
 static bool getWideAddInputs(SDNode *Node, SDValue &In0, SDValue &In1) {
-  if (Node->getOpcode() == WebAssemblyISD::I64_ADD_WIDE2) {
-    In0 = Node->getOperand(0);
-    In1 = Node->getOperand(1);
-    return true;
+  if (Node->getOpcode() == WebAssemblyISD::I64_ADD_WIDE3) {
+    if (isNullConstant(Node->getOperand(2))) {
+      In0 = Node->getOperand(0);
+      In1 = Node->getOperand(1);
+      return true;
+    }
+    if (isNullConstant(Node->getOperand(1))) {
+      In0 = Node->getOperand(0);
+      In1 = Node->getOperand(2);
+      return true;
+    }
+    if (isNullConstant(Node->getOperand(0))) {
+      In0 = Node->getOperand(1);
+      In1 = Node->getOperand(2);
+      return true;
+    }
   }
   if (Node->getOpcode() == WebAssemblyISD::I64_ADD128) {
     if (isNullConstant(Node->getOperand(1)) &&
@@ -4170,10 +4188,11 @@ static SDValue performI64Add128Combine(SDNode *N,
   }
 
   if (isNullConstant(LHS_Hi) && isNullConstant(RHS_Hi)) {
-    SDValue Wide2 =
-        DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
-                    DAG.getVTList(MVT::i64, MVT::i64), LHS_Lo, RHS_Lo);
-    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+    SDValue Zero = DAG.getConstant(0, DL, MVT::i64);
+    SDValue Wide3 =
+        DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                    DAG.getVTList(MVT::i64, MVT::i64), LHS_Lo, RHS_Lo, Zero);
+    return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
   }
 
   return SDValue();
@@ -4188,21 +4207,46 @@ static SDValue performI64AddWide3Combine(SDNode *N,
   SDLoc DL(N);
   auto &DAG = DCI.DAG;
 
-  if (isNullConstant(C)) {
-    SDValue Wide2 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
-                                DAG.getVTList(MVT::i64, MVT::i64), A, B);
-    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+  if (A.getNode() == B.getNode() && A.getResNo() == 0 && B.getResNo() == 1) {
+    SDValue In0, In1;
+    if (getWideAddInputs(A.getNode(), In0, In1)) {
+      SDValue Wide3 =
+          DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                      DAG.getVTList(MVT::i64, MVT::i64), In0, In1, C);
+      return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
+    }
   }
-  if (isNullConstant(B)) {
-    SDValue Wide2 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
-                                DAG.getVTList(MVT::i64, MVT::i64), A, C);
-    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+  if (B.getNode() == C.getNode() && B.getResNo() == 0 && C.getResNo() == 1) {
+    SDValue In0, In1;
+    if (getWideAddInputs(B.getNode(), In0, In1)) {
+      SDValue Wide3 =
+          DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                      DAG.getVTList(MVT::i64, MVT::i64), In0, In1, A);
+      return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
+    }
   }
-  if (isNullConstant(A)) {
-    SDValue Wide2 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE2, DL,
-                                DAG.getVTList(MVT::i64, MVT::i64), B, C);
-    return DCI.CombineTo(N, Wide2.getValue(0), Wide2.getValue(1));
+  if (A.getNode() == C.getNode() && A.getResNo() == 0 && C.getResNo() == 1) {
+    SDValue In0, In1;
+    if (getWideAddInputs(A.getNode(), In0, In1)) {
+      SDValue Wide3 =
+          DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                      DAG.getVTList(MVT::i64, MVT::i64), In0, In1, B);
+      return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
+    }
   }
+
+  // Canonicalize constant 0 operand to the third operand.
+  if (isNullConstant(A) && !isNullConstant(C)) {
+    SDValue Wide3 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                                DAG.getVTList(MVT::i64, MVT::i64), B, C, A);
+    return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
+  }
+  if (isNullConstant(B) && !isNullConstant(C)) {
+    SDValue Wide3 = DAG.getNode(WebAssemblyISD::I64_ADD_WIDE3, DL,
+                                DAG.getVTList(MVT::i64, MVT::i64), A, C, B);
+    return DCI.CombineTo(N, Wide3.getValue(0), Wide3.getValue(1));
+  }
+
   return SDValue();
 }
 

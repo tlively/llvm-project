@@ -171,7 +171,8 @@ define { i64, i1 } @add_wide_u(i64 %a, i64 %b) {
 ; CHECK-NEXT:  # %bb.0:
 ; CHECK-NEXT:    local.get 1
 ; CHECK-NEXT:    local.get 2
-; CHECK-NEXT:    i64.add_wide2
+; CHECK-NEXT:    i64.const 0
+; CHECK-NEXT:    i64.add_wide3
 ; CHECK-NEXT:    local.set 1
 ; CHECK-NEXT:    local.set 2
 ; CHECK-NEXT:    local.get 0
